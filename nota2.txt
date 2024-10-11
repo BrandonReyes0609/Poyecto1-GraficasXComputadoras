@@ -1,0 +1,256 @@
+use nalgebra_glm::Vec2;
+use pixels::{Pixels, SurfaceTexture};
+use std::time::{Duration, Instant};
+use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use image::io::Reader as ImageReader;
+use image::GenericImageView;
+use rodio::{Decoder, OutputStream, Sink, Source}; // Audio handling
+
+mod framebuffer;
+mod cast_ray;
+mod maze;
+mod player;
+mod texture;
+
+use cast_ray::{cast_ray, Intersect};
+use framebuffer::Framebuffer;
+use maze::load_maze;
+use player::Player;
+use rusttype::{Font, Scale};
+use once_cell::sync::Lazy;
+use std::sync::Arc;
+use std::fs::File;
+
+use texture::Texture;
+
+// Textures for the walls
+static WALL1: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/cerca3a.png")));
+static WALL2: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/puerta3.png")));
+
+fn render_image(framebuffer: &mut Framebuffer, img: &image::DynamicImage) {
+    let (img_width, img_height) = img.dimensions();
+    for y in 0..img_height {
+        for x in 0..img_width {
+            let pixel = img.get_pixel(x, y);
+            framebuffer.point(x as usize, y as usize, [pixel[0], pixel[1], pixel[2], pixel[3]]);
+        }
+    }
+}
+
+fn main() {
+    let width = 1300;
+    let height = 900;
+    let width_framebuffer = 1300;
+    let height_framebuffer = 900;
+
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new()
+        .with_title("Rust Graphics - Maze Example")
+        .with_inner_size(winit::dpi::LogicalSize::new(width as f64, height as f64))
+        .build(&event_loop)
+        .unwrap();
+
+    let mut pixels = {
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        Pixels::new(width as u32, height as u32, surface_texture).unwrap()
+    };
+
+    // Load the intro image `inicio.gif`
+    let img = ImageReader::open("assets/inicio.gif")
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    // Load the victory screen image `Fin.png`
+    let fin_img = ImageReader::open("assets/Fin.png")
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    //--------------------
+    // Walking sound `Walking_Forest.mp3`
+    let sound_file = File::open("assets/sounds/Walking_Forest.mp3").unwrap();
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let sink_walk = Sink::try_new(&stream_handle).unwrap();
+    let sound_decoder = Decoder::new(sound_file).unwrap();
+    sink_walk.append(sound_decoder.repeat_infinite());
+    sink_walk.pause(); // Start walking sound paused
+
+    // **Control the walking sound volume**:
+    sink_walk.set_volume(0.9); // Set to 90% volume
+
+    // Load the background sound `Jumpin_June.mp3`
+    let music_file = File::open("assets/sounds/Jumpin_June.mp3").unwrap();
+    let music_sink = Sink::try_new(&stream_handle).unwrap();
+    let music_decoder = Decoder::new(music_file).unwrap();
+    music_sink.append(music_decoder.repeat_infinite());
+    music_sink.play(); // Start the background sound
+
+    // **Control the background sound volume**:
+    music_sink.set_volume(0.1); // Set background sound to 10%
+
+    //-------------------
+
+    let maze = load_maze("maze.txt");
+    let block_size_x = width / maze[0].len();
+    let block_size_y = height / maze.len();
+    let block_size = block_size_x.min(block_size_y);
+
+    let player_pos = Vec2::new(100.0 + block_size as f32, 100.0 + block_size as f32);
+    let player_fov = std::f32::consts::PI / 3.0;
+    let mut player = Player::new(player_pos, std::f32::consts::PI / 3.0, player_fov);
+
+    let mut mode = "2D";
+    let mut last_mouse_x = width as f64 / 2.0;
+    let mouse_sensitivity = 0.005;
+    let mut last_frame_time = Instant::now();
+    let mut frame_count = 0;
+    let mut fps = 0;
+    let fps_update_interval = Duration::from_secs(1);
+    let mut show_intro = true;
+    let mut game_won = false; // Track game state (won or not)
+
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::KeyboardInput {
+                    input: KeyboardInput {
+                        virtual_keycode: Some(keycode),
+                        state,
+                        ..
+                    },
+                    ..
+                } => {
+                    if show_intro && state == ElementState::Pressed {
+                        show_intro = false;
+                    } else if !show_intro && !game_won {
+                        let mut new_pos = player.pos;
+                        let mut moving = false;
+
+                        // Check if one of the keys W, A, S, or D is pressed
+                        match (keycode, state) {
+                            (VirtualKeyCode::Left | VirtualKeyCode::A, ElementState::Pressed) => {
+                                player.a -= std::f32::consts::PI / 10.0;
+                                moving = true;
+                            }
+                            (VirtualKeyCode::Right | VirtualKeyCode::D, ElementState::Pressed) => {
+                                player.a += std::f32::consts::PI / 10.0;
+                                moving = true;
+                            }
+                            (VirtualKeyCode::Up | VirtualKeyCode::W, ElementState::Pressed) => {
+                                new_pos.x += player.a.cos() * 10.0;
+                                new_pos.y += player.a.sin() * 10.0;
+                                moving = true;
+                            }
+                            (VirtualKeyCode::Down | VirtualKeyCode::S, ElementState::Pressed) => {
+                                new_pos.x -= player.a.cos() * 10.0;
+                                new_pos.y -= player.a.sin() * 10.0;
+                                moving = true;
+                            }
+                            (VirtualKeyCode::M, ElementState::Pressed) => {
+                                mode = if mode == "2D" { "3D" } else { "2D" };
+                                window.request_redraw();
+                            }
+                            _ => {}
+                        }
+
+                        // Check if the player reached the goal 'g'
+                        if check_collision(new_pos, &maze, block_size) == 'g' {
+                            game_won = true; // Player has won!
+                        } else if !check_collision(new_pos, &maze, block_size) {
+                            player.pos = new_pos; // Move player if no collision
+                        }
+
+                        // If moving, play walking sound
+                        if moving {
+                            sink_walk.play();
+                        } else {
+                            sink_walk.pause();
+                        }
+
+                        // When releasing the key, stop the walking sound
+                        if state == ElementState::Released {
+                            sink_walk.pause();
+                        }
+                    }
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    if !show_intro && !game_won {
+                        let mouse_x = position.x;
+                        let delta_x = mouse_x - last_mouse_x;
+                        player.a += (delta_x as f32) * (mouse_sensitivity as f32);
+                        last_mouse_x = mouse_x;
+                    }
+                }
+                _ => {}
+            },
+            Event::RedrawRequested(_) => {
+                let frame = pixels.get_frame();
+                let mut framebuffer = Framebuffer::new(width_framebuffer, height_framebuffer, frame);
+                framebuffer.clear([0, 0, 0, 0xFF]);
+
+                if show_intro {
+                    render_image(&mut framebuffer, &img);
+                } else if game_won {
+                    // Show the "Fin.png" screen when the player wins
+                    render_image(&mut framebuffer, &fin_img);
+                } else {
+                    if mode == "2D" {
+                        render2d(&mut framebuffer, &player, &maze, width, height, block_size);
+                    } else {
+                        render3d(&mut framebuffer, &player, block_size, &maze);
+                    }
+
+                    frame_count += 1;
+                    if last_frame_time.elapsed() >= fps_update_interval {
+                        fps = frame_count;
+                        frame_count = 0;
+                        last_frame_time = Instant::now();
+                    }
+
+                    render_text(&mut framebuffer, &format!("FPS: {}", fps), 10, 10, 40.0);
+                }
+
+                if pixels.render().is_err() {
+                    *control_flow = ControlFlow::Exit;
+                }
+            }
+            Event::MainEventsCleared => {
+                window.request_redraw();
+            }
+            _ => {}
+        }
+    });
+}
+
+fn render_text(framebuffer: &mut Framebuffer, text: &str, x: usize, y: usize, scale: f32) {
+    let font_data = include_bytes!("../assets/Typold-Book500.ttf");
+    let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
+    let scale = Scale::uniform(scale);
+    let v_metrics = font.v_metrics(scale);
+    let offset = rusttype::point(x as f32, y as f32 + v_metrics.ascent);
+    let glyphs: Vec<_> = font.layout(text, scale, offset).collect();
+
+    for glyph in glyphs {
+        if let Some(bounding_box) = glyph.pixel_bounding_box() {
+            glyph.draw(|gx, gy, v| {
+                let x = (gx as i32 + bounding_box.min.x) as usize;
+                let y = (gy as i32 + bounding_box.min.y) as usize;
+                if x < framebuffer.width && y < framebuffer.height {
+                    let intensity = (v * 255.0) as u8;
+                    framebuffer.point(x, y, [intensity, intensity, intensity, 255]);
+                }
+            });
+        }
+    }
+}
+
+fn check_collision(pos: Vec2, maze: &Vec<Vec<char>>, block_size: usize) -> char {
+    let i = pos.x as usize / block_size;
+    let j = pos.y as usize / block_size;
+    maze[j][i]  // Return the character at the current maze position
+}
