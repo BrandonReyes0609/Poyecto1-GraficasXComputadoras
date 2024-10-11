@@ -28,6 +28,7 @@ use texture::Texture;
 // Texturas de las paredes
 static WALL1: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/cerca3a.png")));
 static WALL2: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/puerta3.png")));
+static CARROT: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/zanahoriaSFR.png")));
 
 fn render_image(framebuffer: &mut Framebuffer, img: &image::DynamicImage) {
     let (img_width, img_height) = img.dimensions();
@@ -92,7 +93,9 @@ fn main() {
 
     //-------------------
 
-    let maze = load_maze("maze.txt");
+    //let maze = load_maze("maze.txt");
+    let mut maze = load_maze("maze.txt");
+
     let block_size_x = width / maze[0].len();
     let block_size_y = height / maze.len();
     let block_size = block_size_x.min(block_size_y);
@@ -101,6 +104,7 @@ fn main() {
     let player_fov = std::f32::consts::PI / 3.0;
     let mut player = Player::new(player_pos, std::f32::consts::PI / 3.0, player_fov);
 
+    let mut score = 0;
     let mut mode = "2D";
     let mut last_mouse_x = width as f64 / 2.0;
     let mouse_sensitivity = 0.005;
@@ -162,20 +166,23 @@ fn main() {
 
 
                         // Check if the player reached the goal 'g'
-                        if check_collision(new_pos, &maze, block_size) == 'g' {
+                        let collision = check_collision(new_pos, &maze, block_size);
+                        if collision == 'g' {
                             game_won = true;
-                        } else if check_collision(new_pos, &maze, block_size) == ' ' {
+                        } else if collision == ' ' {
                             player.pos = new_pos;
+                        } else if collision == 'z' {
+                            player.pos = new_pos;
+                            score += 1;
+                            maze[new_pos.y as usize / block_size][new_pos.x as usize / block_size] = ' ';
                         }
-                        
-                        // Si se está moviendo, reproducir sonido de pasos
+
                         if moving {
                             sink_walk.play();
                         } else {
                             sink_walk.pause();
                         }
 
-                        // Cuando se suelta la tecla, detener el sonido de caminar
                         if state == ElementState::Released {
                             sink_walk.pause();
                         }
@@ -215,7 +222,9 @@ fn main() {
                         last_frame_time = Instant::now();
                     }
 
-                    render_text(&mut framebuffer, &format!("FPS: {}", fps), 10, 10, 40.0);
+                    //render_text(&mut framebuffer, &format!("FPS: {}", fps), 10, 10, 40.0);
+                    framebuffer.draw_text(&format!("FPS: {}", fps), 10, 10, 40.0);
+                    framebuffer.draw_text(&format!("Puntos: {}", score), width - 150, 10, 30.0);
                 }
 
                 if pixels.render().is_err() {
@@ -267,6 +276,7 @@ fn render2d(
                 '-' => WALL1.get_pixel_color(0, 0),
                 '|' => WALL1.get_pixel_color(0, 0),
                 'g' => WALL1.get_pixel_color(0, 0),
+                'z' => CARROT.get_pixel_color(0, 0), // Nueva condición para la zanahoria
                 ' ' => [0xFF, 0xD7, 0xB3, 0xFF],
                 'p' => [0x00, 0xFF, 0x00, 0xFF],
                 _ => [0x00, 0x00, 0x00, 0xFF],
@@ -322,6 +332,8 @@ fn render3d(
                 '-' => WALL1.get_pixel_color(intersect.tx.try_into().unwrap(), ty),
                 '|' => WALL1.get_pixel_color(intersect.tx.try_into().unwrap(), ty),
                 'g' => WALL2.get_pixel_color(intersect.tx.try_into().unwrap(), ty),
+                'z' => CARROT.get_pixel_color(intersect.tx.try_into().unwrap(), ty), // Textura de zanahoria
+
                 _ => [0x00, 0x00, 0x00, 0xFF],
             };
 
@@ -332,7 +344,6 @@ fn render3d(
     let minimap_size = 200;
     render_minimap(framebuffer, player, maze, minimap_size, block_size);
 }
-
 fn render_minimap(
     framebuffer: &mut framebuffer::Framebuffer,
     player: &Player,
@@ -384,4 +395,3 @@ fn check_collision(pos: Vec2, maze: &Vec<Vec<char>>, block_size: usize) -> char 
     let j = pos.y as usize / block_size;
     maze[j][i]
 }
-
