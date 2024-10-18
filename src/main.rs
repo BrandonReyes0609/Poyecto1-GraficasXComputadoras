@@ -28,7 +28,7 @@ use texture::Texture;
 // Texturas de las paredes
 static WALL1: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/cerca3a.png")));
 static WALL2: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/puerta3.png")));
-static CARROT: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/zanahoriaSFR.png")));
+static CARROT: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/Z3.png")));
 
 fn render_image(framebuffer: &mut Framebuffer, img: &image::DynamicImage) {
     let (img_width, img_height) = img.dimensions();
