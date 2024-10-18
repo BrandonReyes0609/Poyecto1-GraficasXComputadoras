@@ -70,6 +70,14 @@ fn main() {
         .unwrap()
         .decode()
         .unwrap();
+    // Cargar la imagen de derrota `Perdio.png`
+    let perdio_img = ImageReader::open("assets/sprite//Perdio.png")
+    .unwrap()
+    .decode()
+    .unwrap();
+
+    let mut player_lost = false;  // Variable para determinar si el jugador ha perdido
+
     //--------------------
     // Cargar la música de caminar "Walking_Forest.mp3"
     let sound_file = File::open("assets/sounds/Walking_Forest.mp3").unwrap();
@@ -115,6 +123,13 @@ fn main() {
     let fps_update_interval = Duration::from_secs(1);
     let mut show_intro = true;
     let mut game_won = false; // Track game state (won or not)
+
+    // **Configuración de la animación del gato**
+    let mut cat_pos = Vec2::new(299.13, 91.41);  // Posición inicial
+    let cat_end_pos = Vec2::new(299.13, 120.41); // Posición final
+    let mut cat_direction = 1.0;                 // Dirección del movimiento (1 = hacia adelante, -1 = hacia atrás)
+    let cat_speed = 0.05;                        // Velocidad de movimiento
+    
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -178,6 +193,13 @@ fn main() {
                             maze[new_pos.y as usize / block_size][new_pos.x as usize / block_size] = ' ';
                         }
 
+                        // Verificar colisión con el gato
+                        let distance_to_cat = (player.pos - cat_pos).magnitude();
+                        if distance_to_cat < block_size as f32 {
+                            player_lost = true;  // Marcar que el jugador ha perdido
+                        }
+
+
                         if moving {
                             sink_walk.play();
                         } else {
@@ -209,18 +231,45 @@ fn main() {
                 } else if game_won {
                     // Show the "Fin.png" screen when the player wins
                     render_image(&mut framebuffer, &fin_img);
+
+                    
+                } else if player_lost {
+                    // Mostrar la pantalla de que el jugador perdió
+                    render_image(&mut framebuffer, &perdio_img);
+
                 } else {
                     if mode == "2D" {
                         render2d(&mut framebuffer, &player, &maze, width, height, block_size);
                     } else {
                         render3d(&mut framebuffer, &player, block_size, &maze);
                         let distance_to_projection_plane = width_framebuffer as f32 / 2.0 / (player.fov / 2.0).tan();
+                                                //(299.13,91.41)
+                        //(299.13,120.41)
+
+
                         //let cat_pos = Vec2::new(300.0, 200.0);  // Posición del gato en el mundo
-                        let cat_pos = Vec2::new(300.26, 218.68);  // Ajusta esta posición según tu laberinto
-                        //(290.26, 218.68)
-                        //(299.13,267.41)
-                        //render_cat_sprite(&mut framebuffer, &player, cat_pos, distance_to_projection_plane, block_size, &maze);                        
-                        render_cat_sprite(&mut framebuffer, &player, cat_pos, distance_to_projection_plane, block_size, &maze);
+                        //let cat_pos = Vec2::new(300.26, 218.68);  // Ajusta esta posición según tu laberinto
+                        //let cat_pos = Vec2::new(299.13,91.41);  // Ajusta esta posición según tu laberinto
+
+                        // **Animación del gato**
+                        // Mover el gato entre las dos posiciones
+                        cat_pos.y += cat_speed * cat_direction;
+
+                        // Invertir la dirección cuando llega a los extremos
+                        if cat_pos.y >= cat_end_pos.y || cat_pos.y <= 91.41 {
+                            cat_direction *= -1.0;
+                        }
+
+                        render_cat_sprite(
+                            &mut framebuffer, 
+                            &player, 
+                            cat_pos, 
+                            distance_to_projection_plane, 
+                            block_size, 
+                            &maze, 
+                            300.0
+                        );
+                    
 
                     }
 
@@ -419,6 +468,7 @@ fn render_cat_sprite(
     distance_to_projection_plane: f32,
     block_size: usize,
     maze: &Vec<Vec<char>>,  // Referencia al laberinto
+    max_distance: f32,  // Distancia máxima de visibilidad
 ) {
     // Verificar si el gato está colisionando con una pared
     if check_cat_collision(cat_pos, maze, block_size) {
@@ -428,7 +478,13 @@ fn render_cat_sprite(
     let direction = cat_pos - player.pos;
     let distance = direction.magnitude();
 
-    if distance < 0.01 {
+    // Evitar que el gato se vea si está más allá de la distancia máxima
+    if distance > max_distance {
+        return;
+    }
+
+    // Verificar si hay una pared entre el jugador y el gato (línea de visión)
+    if !has_line_of_sight(&player.pos, &cat_pos, maze, block_size) {
         return;
     }
 
@@ -451,4 +507,25 @@ fn render_cat_sprite(
             framebuffer.point(x, y, color);
         }
     }
+}
+
+
+fn has_line_of_sight(start_pos: &Vec2, target_pos: &Vec2, maze: &Vec<Vec<char>>, block_size: usize) -> bool {
+    let delta = *target_pos - *start_pos;
+    let steps = delta.magnitude() as usize;
+    let step = delta / steps as f32;
+
+    let mut current_pos = *start_pos;
+    for _ in 0..steps {
+        current_pos += step;
+
+        // Verificar si la posición actual está dentro de una pared
+        let i = (current_pos.x / block_size as f32) as usize;
+        let j = (current_pos.y / block_size as f32) as usize;
+        if maze[j][i] != ' ' {
+            return false;  // Hay una pared bloqueando la línea de visión
+        }
+    }
+
+    true  // No hay obstrucciones en la línea de visión
 }
