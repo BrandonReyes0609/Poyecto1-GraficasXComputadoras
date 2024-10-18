@@ -29,6 +29,7 @@ use texture::Texture;
 static WALL1: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/cerca3a.png")));
 static WALL2: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/puerta3.png")));
 static CARROT: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/Z3.png")));
+static CAT_TEXTURE: Lazy<Arc<Texture>> = Lazy::new(|| Arc::new(Texture::new("assets/sprite/gatoM.png")));
 
 fn render_image(framebuffer: &mut Framebuffer, img: &image::DynamicImage) {
     let (img_width, img_height) = img.dimensions();
@@ -213,6 +214,14 @@ fn main() {
                         render2d(&mut framebuffer, &player, &maze, width, height, block_size);
                     } else {
                         render3d(&mut framebuffer, &player, block_size, &maze);
+                        let distance_to_projection_plane = width_framebuffer as f32 / 2.0 / (player.fov / 2.0).tan();
+                        //let cat_pos = Vec2::new(300.0, 200.0);  // Posición del gato en el mundo
+                        let cat_pos = Vec2::new(300.26, 218.68);  // Ajusta esta posición según tu laberinto
+                        //(290.26, 218.68)
+                        //(299.13,267.41)
+                        //render_cat_sprite(&mut framebuffer, &player, cat_pos, distance_to_projection_plane, block_size, &maze);                        
+                        render_cat_sprite(&mut framebuffer, &player, cat_pos, distance_to_projection_plane, block_size, &maze);
+
                     }
 
                     frame_count += 1;
@@ -394,4 +403,52 @@ fn check_collision(pos: Vec2, maze: &Vec<Vec<char>>, block_size: usize) -> char 
     let i = pos.x as usize / block_size;
     let j = pos.y as usize / block_size;
     maze[j][i]
+}
+fn check_cat_collision(cat_pos: Vec2, maze: &Vec<Vec<char>>, block_size: usize) -> bool {
+    let i = (cat_pos.x / block_size as f32) as usize;
+    let j = (cat_pos.y / block_size as f32) as usize;
+    
+    // Verifica si la celda actual es una pared
+    maze[j][i] == '+' || maze[j][i] == '-' || maze[j][i] == '|'
+}
+
+fn render_cat_sprite(
+    framebuffer: &mut framebuffer::Framebuffer,
+    player: &Player,
+    cat_pos: Vec2,  // Posición del gato
+    distance_to_projection_plane: f32,
+    block_size: usize,
+    maze: &Vec<Vec<char>>,  // Referencia al laberinto
+) {
+    // Verificar si el gato está colisionando con una pared
+    if check_cat_collision(cat_pos, maze, block_size) {
+        return;  // Si el gato está en una pared, no se renderiza
+    }
+
+    let direction = cat_pos - player.pos;
+    let distance = direction.magnitude();
+
+    if distance < 0.01 {
+        return;
+    }
+
+    let angle_to_player = direction.y.atan2(direction.x) - player.a;
+
+    let sprite_height = (distance_to_projection_plane / distance) * block_size as f32;
+    let sprite_top = (framebuffer.get_height() as f32 / 2.0 - sprite_height / 2.0).max(0.0) as usize;
+    let sprite_bottom = (framebuffer.get_height() as f32 / 2.0 + sprite_height / 2.0).min(framebuffer.get_height() as f32) as usize;
+
+    let sprite_width = sprite_height;  // Suponiendo que el sprite es cuadrado
+    let sprite_left = (framebuffer.get_width() as f32 / 2.0 + angle_to_player * distance_to_projection_plane).max(0.0) as usize;
+    let sprite_right = (sprite_left as f32 + sprite_width).min(framebuffer.get_width() as f32) as usize;
+
+    for y in sprite_top..sprite_bottom {
+        for x in sprite_left..sprite_right {
+            let tx = ((x - sprite_left) as f32 / (sprite_right - sprite_left) as f32 * CAT_TEXTURE.width as f32) as u32;
+            let ty = ((y - sprite_top) as f32 / (sprite_bottom - sprite_top) as f32 * CAT_TEXTURE.height as f32) as u32;
+            let color = CAT_TEXTURE.get_pixel_color(tx, ty);
+
+            framebuffer.point(x, y, color);
+        }
+    }
 }
